@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -10,11 +11,42 @@ import (
 	"github.com/go-sql-driver/mysql"
 )
 
-type Activity struct {
-	ID       int
+// DBConfig 结构体用于存储数据库连接配置。
+type DBConfig struct {
+	Host     string
+	Port     string
 	Name     string
-	Capacity int
-	Open     bool
+	User     string
+	Password string
+}
+
+// Activity 结构体用于表示活动信息。
+type Activity struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	Capacity int    `json:"capacity"`
+	Open     bool   `json:"open"`
+}
+
+// loadDBConfig 函数从环境变量中加载数据库配置，并返回一个 DBConfig 结构体和一个 error。
+func loadDBConfig() (*DBConfig, error) {
+	host := os.Getenv("DB_HOST")
+	port := os.Getenv("DB_PORT")
+	name := os.Getenv("DB_NAME")
+	user := os.Getenv("DB_USER")
+	password := os.Getenv("DB_PASSWORD")
+
+	if host == "" || port == "" || name == "" || user == "" || password == "" {
+		return nil, fmt.Errorf("database configuration is not set properly")
+	}
+
+	return &DBConfig{
+		Host:     host,
+		Port:     port,
+		Name:     name,
+		User:     user,
+		Password: password,
+	}, nil
 }
 
 // loadActivities 函数从数据库中加载活动数据，并返回一个包含所有活动的切片（和error）。
@@ -52,6 +84,7 @@ func loadActivities(db *sql.DB) ([]Activity, error) { //db *sql.DB：把 main() 
 	return activities, nil
 }
 
+// healthHandler 是一个 HTTP 处理函数，用于返回服务的健康状态。
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
@@ -59,39 +92,65 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 返回所有信息到前端
+func activitiesHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		//方法检查
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+
+			json.NewEncoder(w).Encode(
+				map[string]string{
+					"error": "method not allowed",
+				},
+			)
+
+			return
+		}
+
+		activities, err := loadActivities(db)
+		//活动读取错误。
+		if err != nil {
+			log.Println("load activities:", err)
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError) //服务器内部错误（500）
+
+			json.NewEncoder(w).Encode(
+				map[string]string{
+					"error": "failed to load activities",
+				},
+			) //为什么这里要使用map?是因为这种键值对的形式适合编写成json吗？
+			return
+		}
+
+		// 查询成功但没有活动时，将 nil 切片转换为空切片，使 JSON 返回 [] 而不是 null。
+		if activities == nil {
+			activities = []Activity{}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		if err := json.NewEncoder(w).Encode(activities); err != nil {
+			log.Println("encode activities:", err)
+		}
+	}
+}
+
 func main() {
-	dbHost := os.Getenv("DB_HOST")
-	dbPort := os.Getenv("DB_PORT")
-	dbName := os.Getenv("DB_NAME")
-	dbUser := os.Getenv("DB_USER")
-	dbPassword := os.Getenv("DB_PASSWORD")
-
-	if dbHost == "" {
-		log.Fatal("DB_HOST is not set")
-	}
-
-	if dbPort == "" {
-		log.Fatal("DB_PORT is not set")
-	}
-
-	if dbName == "" {
-		log.Fatal("DB_NAME is not set")
-	}
-
-	if dbUser == "" {
-		log.Fatal("DB_USER is not set")
-	}
-
-	if dbPassword == "" {
-		log.Fatal("DB_PASSWORD is not set")
+	dbConfig, err := loadDBConfig()
+	if err != nil {
+		log.Fatal("load database configuration: ", err)
 	}
 
 	cfg := mysql.Config{
-		User:   dbUser,
-		Passwd: dbPassword,
+		User:   dbConfig.User,
+		Passwd: dbConfig.Password,
 		Net:    "tcp",
-		Addr:   dbHost + ":" + dbPort,
-		DBName: dbName,
+		Addr:   dbConfig.Host + ":" + dbConfig.Port,
+		DBName: dbConfig.Name,
 	}
 
 	db, err := sql.Open("mysql", cfg.FormatDSN()) //db就是数据库连接池对象
@@ -106,15 +165,8 @@ func main() {
 	log.Println("database connected") //数据库连接成功
 	defer db.Close()
 
-	activities, err := loadActivities(db) //这里的db数据库连接池对象，传入这个函数
-	if err != nil {
-		log.Fatal("load activities:", err) //Fatal打印之后会直接杀掉程序
-	}
-	for _, activity := range activities {
-		log.Printf("Activity: %+v", activity)
-	}
-
 	http.HandleFunc("/health", healthHandler)
+	http.HandleFunc("/activities", activitiesHandler(db))
 
 	http.ListenAndServe(":8080", nil)
 }
