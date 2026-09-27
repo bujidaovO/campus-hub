@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
@@ -89,6 +90,25 @@ func loadActivities(db *sql.DB) ([]Activity, error) { //db *sql.DB：把 main() 
 	}
 
 	return activities, nil
+}
+
+// loadActivity()用于数据库（单个）查询
+func loadActivity(db *sql.DB, id int) (Activity, error) {
+	var activity Activity
+
+	//
+	err := db.QueryRow(`
+	SELECT id, name, capacity, open
+	FROM activities
+	WHERE id = ?
+	`, id).Scan(
+		&activity.ID,
+		&activity.Name,
+		&activity.Capacity,
+		&activity.Open,
+	)
+
+	return activity, err
 }
 
 // healthHandler 是一个 HTTP 处理函数，用于返回服务的健康状态。
@@ -254,6 +274,55 @@ func activitiesHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// /activities/
+func activityDetailHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		//获得id
+		idText := strings.TrimPrefix(r.URL.Path, "/activities/")
+
+		id, err := strconv.Atoi(idText)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(
+				map[string]string{
+					"error": "invalid activity id",
+				},
+			)
+
+			return
+		}
+
+		activity, err := loadActivity(db, id)
+
+		if err != nil {
+			if err == sql.ErrNoRows {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "activity not found",
+				})
+				return
+			}
+
+			log.Println("load activity error:", err)
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "failed to load activity",
+			})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		json.NewEncoder(w).Encode(activity)
+	}
+}
+
 func main() {
 	dbConfig, err := loadDBConfig()
 	if err != nil {
@@ -282,6 +351,7 @@ func main() {
 
 	http.HandleFunc("/health", healthHandler)
 	http.HandleFunc("/activities", activitiesHandler(db))
+	http.HandleFunc("/activities/", activityDetailHandler(db))
 
 	http.ListenAndServe(":8080", nil)
 }
