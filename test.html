@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>API Tester</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f5f6f8; color: #202938; font: 16px/1.6 system-ui, sans-serif; }
+    main { max-width: 960px; margin: 32px auto; padding: 0 20px; }
+    h1, h2, h3 { line-height: 1.3; }
+    h1 { margin-bottom: 8px; }
+    h2 { margin-top: 0; font-size: 22px; }
+    h3 { margin-bottom: 8px; font-size: 16px; }
+    section { margin: 24px 0; padding: 24px; background: white; border: 1px solid #d6dce5; border-radius: 8px; }
+    label { display: block; margin: 16px 0 6px; font-weight: 600; }
+    input, select, textarea, button { font: inherit; }
+    input, select, textarea { width: 100%; padding: 10px; border: 1px solid #8c98aa; border-radius: 4px; background: white; color: inherit; }
+    textarea, pre { font-family: ui-monospace, Consolas, monospace; font-size: 14px; }
+    textarea { min-height: 180px; resize: vertical; }
+    button { padding: 8px 14px; border: 1px solid #8c98aa; border-radius: 4px; background: #fff; color: inherit; cursor: pointer; }
+    button:hover { background: #edf2fa; }
+    button:disabled { cursor: wait; opacity: .6; }
+    :focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
+    .primary { margin-top: 16px; background: #2158bc; color: white; border-color: #2158bc; }
+    .primary:hover { background: #194798; }
+    .row { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 16px; }
+    .presets { display: flex; flex-wrap: wrap; gap: 8px; }
+    .hint { color: #536176; font-size: 14px; }
+    .error { color: #a21a22; white-space: pre-wrap; overflow-wrap: anywhere; }
+    pre { margin: 0; padding: 14px; background: #f5f6f8; border: 1px solid #d6dce5; border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 480px; overflow: auto; }
+    #response-status { font-weight: 600; }
+    #response-status[data-kind="success"] { color: #14663b; }
+    #response-status[data-kind="error"] { color: #a21a22; }
+    @media (max-width: 600px) { main { margin: 20px auto; padding: 0 12px; } section { padding: 16px; } .row { grid-template-columns: 1fr; gap: 0; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>API Tester</h1>
+    <p class="hint">独立的 HTTP API 调试工具。填写请求，手动发送，查看响应。</p>
+
+    <section aria-labelledby="request-title">
+      <h2 id="request-title">Request / 请求</h2>
+      <div class="presets" aria-label="快捷请求">
+        <button type="button" data-preset="list">GET 活动列表</button>
+        <button type="button" data-preset="detail">GET 单个活动</button>
+        <button type="button" data-preset="update">PATCH 活动</button>
+      </div>
+      <p class="hint">快捷按钮只填写请求；使用当前 URL 的服务地址，默认活动 ID 为 1。</p>
+
+      <form id="request-form">
+        <div class="row">
+          <div>
+            <label for="request-method">Method</label>
+            <select id="request-method">
+              <option>GET</option>
+              <option>POST</option>
+              <option>PATCH</option>
+              <option>PUT</option>
+              <option>DELETE</option>
+            </select>
+          </div>
+          <div>
+            <label for="request-url">URL</label>
+            <input id="request-url" type="url" value="http://localhost:8080/activities" required spellcheck="false" aria-describedby="url-hint">
+          </div>
+        </div>
+        <p id="url-hint" class="hint">请输入完整的 http:// 或 https:// 地址。</p>
+        <label for="request-body">Request Body / JSON</label>
+        <textarea id="request-body" spellcheck="false" aria-describedby="body-hint" placeholder='{"name": "test", "capacity": 50}'></textarea>
+        <p id="body-hint" class="hint">可留空。非空内容会在发送前校验 JSON。GET 不支持 body，请留空。</p>
+        <button id="send-button" class="primary" type="submit">Send / 发送请求</button>
+        <p id="request-error" class="error" role="alert" hidden></p>
+      </form>
+
+      <details class="hint">
+        <summary>本地使用与跨域说明</summary>
+        <p>可直接用浏览器打开此文件。若 API 与页面不同源（包括 file:// 打开），后端需要允许跨域来源、请求方法和 Content-Type 请求头，并处理 OPTIONS 预检。</p>
+        <p>当前项目可通过 http://localhost:8080/test.html 同源访问此页面，无需跨域配置。若直接打开文件，详情和 PATCH 接口仍需要补充 CORS。页面无法绕过浏览器的跨域限制。</p>
+        <p>Response Headers 仅显示浏览器允许读取的响应头；跨域时，额外响应头需要后端通过 Access-Control-Expose-Headers 暴露。</p>
+      </details>
+    </section>
+
+    <section id="response" aria-labelledby="response-title" aria-busy="false">
+      <h2 id="response-title">Response / 响应</h2>
+      <h3>Status</h3>
+      <p id="response-status" role="status">尚未发送请求</p>
+      <h3>Response Headers</h3>
+      <pre id="response-headers">—</pre>
+      <h3>Response Body</h3>
+      <pre id="response-body">—</pre>
+    </section>
+  </main>
+
+  <script>
+    'use strict';
+
+    // 迁移到其他项目时，修改默认地址和预设即可。
+    const DEFAULT_BASE_URL = 'http://localhost:8080';
+    const presets = {
+      list: { method: 'GET', path: '/activities', body: '' },
+      detail: { method: 'GET', path: '/activities/1', body: '' },
+      update: { method: 'PATCH', path: '/activities/1', body: '{"name":"new name"}' }
+    };
+    const ui = {
+      form: document.getElementById('request-form'),
+      method: document.getElementById('request-method'),
+      url: document.getElementById('request-url'),
+      body: document.getElementById('request-body'),
+      send: document.getElementById('send-button'),
+      error: document.getElementById('request-error'),
+      response: document.getElementById('response'),
+      status: document.getElementById('response-status'),
+      headers: document.getElementById('response-headers'),
+      responseBody: document.getElementById('response-body')
+    };
+
+    function formatJSON(text) {
+      try {
+        return JSON.stringify(JSON.parse(text), null, 2);
+      } catch {
+        return text; // 非 JSON 响应（如纯文本或 HTML）保留原文。
+      }
+    }
+
+    function showError(message = '') {
+      ui.error.textContent = message;
+      ui.error.hidden = !message;
+    }
+
+    function loadPreset(name) {
+      const preset = presets[name];
+      if (!preset) return;
+      let baseURL = DEFAULT_BASE_URL;
+      try {
+        const currentURL = new URL(ui.url.value.trim());
+        if (['http:', 'https:'].includes(currentURL.protocol)) baseURL = currentURL.origin;
+      } catch { /* 地址未填写完整时，使用项目默认地址。 */ }
+      ui.method.value = preset.method;
+      ui.url.value = new URL(preset.path, baseURL).href;
+      ui.body.value = preset.body ? formatJSON(preset.body) : '';
+      showError();
+    }
+
+    function readRequest() {
+      let url;
+      try {
+        url = new URL(ui.url.value.trim());
+      } catch {
+        throw new Error('请输入有效的完整请求 URL。');
+      }
+      if (!['http:', 'https:'].includes(url.protocol)) {
+        throw new Error('请求 URL 必须使用 http:// 或 https://。');
+      }
+      const method = ui.method.value;
+      const body = ui.body.value.trim();
+      if (body) {
+        try {
+          JSON.parse(body);
+        } catch (error) {
+          throw new Error('JSON 格式错误：' + error.message);
+        }
+        if (method === 'GET') throw new Error('GET 请求不能携带 body，请清空 Request Body 或更换方法。');
+      }
+      return { url: url.href, method, body };
+    }
+
+    // 请求配置集中在此；以后可在这里加入 Authorization、credentials 或 FormData。
+    function buildRequestOptions(request) {
+      const options = {
+        method: request.method,
+        headers: { 'Content-Type': 'application/json' }
+      };
+      if (request.body) options.body = request.body;
+      return options;
+    }
+
+    function showResponse(response, body) {
+      ui.status.textContent = `${response.status} ${response.statusText}`.trim();
+      ui.status.dataset.kind = response.ok ? 'success' : 'error';
+      ui.headers.textContent = Array.from(response.headers, ([key, value]) => `${key}: ${value}`).join('\n') || '（无可读取的响应头）';
+      // 使用 textContent，避免执行响应中的 HTML 或脚本。
+      ui.responseBody.textContent = body === '' ? '（空响应体）' : formatJSON(body);
+    }
+
+    async function sendRequest(event) {
+      event.preventDefault();
+      if (ui.send.disabled) return;
+      showError();
+      let request;
+      try {
+        request = readRequest();
+      } catch (error) {
+        showError(error.message);
+        return;
+      }
+
+      ui.send.disabled = true;
+      ui.send.textContent = '发送中…';
+      ui.response.setAttribute('aria-busy', 'true');
+      ui.status.textContent = '请求中…';
+      ui.status.dataset.kind = '';
+      ui.headers.textContent = '—';
+      ui.responseBody.textContent = '—';
+      let response;
+      try {
+        response = await fetch(request.url, buildRequestOptions(request));
+        showResponse(response, await response.text());
+      } catch (error) {
+        if (response) {
+          showResponse(response, '（响应体读取失败）');
+        } else {
+          ui.status.textContent = '请求失败（未取得 HTTP 响应）';
+          ui.status.dataset.kind = 'error';
+        }
+        showError(`${error.message}\n请检查服务是否启动、URL 是否正确，以及浏览器控制台中的网络或 CORS 错误。`);
+      } finally {
+        ui.send.disabled = false;
+        ui.send.textContent = 'Send / 发送请求';
+        ui.response.setAttribute('aria-busy', 'false');
+      }
+    }
+
+    ui.form.addEventListener('submit', sendRequest);
+    document.querySelectorAll('[data-preset]').forEach(button => {
+      button.addEventListener('click', () => loadPreset(button.dataset.preset));
+    });
+    // 同源托管时自动使用当前服务地址；直接打开文件时使用本地 Go 服务。
+    ui.url.value = new URL('/activities', ['http:', 'https:'].includes(location.protocol) ? location.origin : DEFAULT_BASE_URL).href;
+  </script>
+</body>
+</html>

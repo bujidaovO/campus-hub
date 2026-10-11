@@ -174,8 +174,9 @@ func activitiesHandler(db *sql.DB) http.HandlerFunc {
 
 // /activities/
 func activityDetailHandler(db *sql.DB) http.HandlerFunc {
+
 	return func(w http.ResponseWriter, r *http.Request) {
-		//获得id
+		//取得id
 		idText := strings.TrimPrefix(r.URL.Path, "/activities/")
 
 		id, err := strconv.Atoi(idText)
@@ -191,32 +192,147 @@ func activityDetailHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		activity, err := loadActivity(db, id)
+		//对于某个活动做路径分流处理
+		switch r.Method {
 
-		if err != nil {
-			if err == sql.ErrNoRows {
+		case http.MethodGet:
+			//获得详细信息
+
+			activity, err := loadActivity(db, id)
+
+			if err != nil {
+				if err == sql.ErrNoRows {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusNotFound)
+
+					json.NewEncoder(w).Encode(map[string]string{
+						"error": "activity not found",
+					})
+					return
+				}
+
+				log.Println("load activity error:", err)
+
 				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusNotFound)
+				w.WriteHeader(http.StatusInternalServerError)
 
 				json.NewEncoder(w).Encode(map[string]string{
-					"error": "activity not found",
+					"error": "failed to load activity",
 				})
 				return
 			}
 
-			log.Println("load activity error:", err)
+			w.Header().Set("Content-Type", "application/json")
+
+			json.NewEncoder(w).Encode(activity)
+
+		case http.MethodPatch:
+			//修改数据
+
+			//解析请求json为结构体
+			var req UpdateActivityRequest
+			err := json.NewDecoder(r.Body).Decode(&req)
+			if err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "invalid request body",
+				},
+				)
+
+				return
+			}
+
+			//校验结构体内数据是否合法：name不允许为空，capacity>0。如果为nil，不做修改。
+			if req.Name != nil && strings.TrimSpace(*req.Name) == "" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+
+				json.NewEncoder(w).Encode(
+					map[string]string{
+						"error": "name cannot be empty",
+					},
+				)
+
+				return
+			}
+
+			//校验活动容量
+			if req.Capacity != nil && *req.Capacity <= 0 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+
+				json.NewEncoder(w).Encode(
+					map[string]string{
+						"error": "capacity must be greater than 0",
+					},
+				)
+
+				return
+			}
+
+			//校验完成，进入更新数据设计
+			err = updateActivity(db, id, req)
+			if err != nil {
+
+				if err == sql.ErrNoRows {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusNotFound)
+
+					json.NewEncoder(w).Encode(
+						map[string]string{
+							"error": "activity not found",
+						},
+					)
+
+					return
+				}
+
+				log.Println("update activity error:", err)
+
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+
+				json.NewEncoder(w).Encode(
+					map[string]string{
+						"error": "failed to update activity",
+					},
+				)
+
+				return
+			}
+			//查询并返回更新后的数据
+			activity, err := loadActivity(db, id)
+			if err != nil {
+				log.Println("load updated activity error:", err)
+
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+
+				json.NewEncoder(w).Encode(
+					map[string]string{
+						"error": "failed to load updated activity",
+					},
+				)
+
+				return
+			}
 
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(activity)
 
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "failed to load activity",
-			})
-			return
+		default:
+			//说明允许方法，返回405
+			w.Header().Set("Allow", "GET, PATCH")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+
+			json.NewEncoder(w).Encode(
+				map[string]string{
+					"error": "method not allowed",
+				},
+			)
 		}
-
-		w.Header().Set("Content-Type", "application/json")
-
-		json.NewEncoder(w).Encode(activity)
 	}
 }

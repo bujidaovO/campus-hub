@@ -12,6 +12,9 @@ func main() {
 	}
 	defer db.Close()
 
+	http.HandleFunc("GET /test.html", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "test.html")
+	})
 	http.HandleFunc("/health", healthHandler)
 	http.HandleFunc("/activities", activitiesHandler(db))
 	http.HandleFunc("/activities/", activityDetailHandler(db))
