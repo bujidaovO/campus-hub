@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+var ErrNoFields = errors.New("no fields to update")
+
 // loadActivities 函数从数据库中加载活动数据，并返回一个包含所有活动的切片（和error）。
 func loadActivities(db *sql.DB) ([]Activity, error) { //db *sql.DB：把 main() 里的数据库连接池对象传进函数。(依旧指针形式)
 	rows, err := db.Query(
@@ -67,7 +69,7 @@ func updateActivity(db *sql.DB, id int, req UpdateActivityRequest) error {
 	_, err := loadActivity(db, id)
 	if err != nil {
 		return err
-	} //err == sql.ErrNoRows
+	}
 
 	var setClauses []string
 	var args []any
@@ -87,7 +89,7 @@ func updateActivity(db *sql.DB, id int, req UpdateActivityRequest) error {
 
 	//检查更改内容是否为空
 	if len(setClauses) == 0 {
-		return errors.New("no fields to update")
+		return ErrNoFields
 	}
 
 	//填入需要更新的活动id
