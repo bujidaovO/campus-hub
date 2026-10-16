@@ -5,10 +5,73 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
 )
+
+// parsePagination是一个获取和计算分页的函数
+// 返回的error只有一种情况：参数不合法（400），error分为三种：page不合法，pageSize不合法，(page-1)与pageSize的积出现了溢出。
+func parsePagination(r *http.Request) (Pagination, error) {
+	pagination := Pagination{
+		Page:     1,
+		PageSize: 10,
+		Offset:   0,
+	}
+
+	query := r.URL.Query()
+
+	//提取并校验page参数
+	values, exists := query["page"]
+	if exists {
+		//如果存在，处理并校验参数：
+		// 1、是否有多个参数（400）
+		// 2、参数Atoi是否合法（不是小数&&没有字母&&参数不为空&&前后没有空格）（400）
+		// 3、参数Atoi之后范围检查（大于等于1）
+		if len(values) != 1 {
+			return Pagination{}, errors.New("invalid Page parameter")
+		}
+		page, err := strconv.Atoi(values[0])
+		if err != nil {
+			return Pagination{}, errors.New("invalid Page parameter")
+		}
+		//Atoi已经完成，校验page参数范围
+		if page < 1 {
+			return Pagination{}, errors.New("invalid Page parameter")
+		}
+		pagination.Page = page
+	}
+
+	//提取并校验page_size参数
+	values, exists = query["page_size"]
+	if exists {
+		//如果存在，处理并校验参数：
+		// 1、是否有多个参数（400）
+		// 2、参数Atoi是否合法（不是小数&&没有字母&&参数不为空&&前后没有空格）（400）
+		// 3、参数Atoi之后范围检查（大于等于1小于等于100）
+		if len(values) != 1 {
+			return Pagination{}, errors.New("invalid PageSize parameter")
+		}
+		pageSize, err := strconv.Atoi(values[0])
+		if err != nil {
+			return Pagination{}, errors.New("invalid PageSize parameter")
+		}
+		//Atoi已经完成，校验page参数范围
+		if pageSize < 1 || pageSize > 100 {
+			return Pagination{}, errors.New("invalid PageSize parameter")
+		}
+		pagination.PageSize = pageSize
+	}
+
+	if pagination.Page-1 > math.MaxInt/pagination.PageSize {
+		return Pagination{}, errors.New("invalid pagination parameters")
+	}
+	//计算偏移量并返回结果
+	pagination.Offset = (pagination.Page - 1) * pagination.PageSize
+
+	return pagination, nil
+}
 
 // healthHandler 是一个 HTTP 处理函数，用于返回服务的健康状态。
 func healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -39,16 +102,32 @@ func activitiesHandler(db *sql.DB) http.HandlerFunc {
 
 		//GET方法
 		case http.MethodGet:
-			activities, err := loadActivities(db)
-			//如果活动读取错误
+			//提取分页参数，计算偏移量保存到Pagination
+			pagination, err := parsePagination(r)
+			if err != nil {
+				writeJSONError(
+					w,
+					http.StatusBadRequest,
+					err.Error(),
+				)
+
+				return
+			}
+
+			activities, err := loadActivities(
+				db,
+				pagination.PageSize,
+				pagination.Offset,
+			)
 			if err != nil {
 				log.Println("load activities:", err)
 
 				writeJSONError(
 					w,
-					http.StatusInternalServerError, //服务器内部错误（500）
+					http.StatusInternalServerError,
 					"failed to load activities",
 				)
+
 				return
 			}
 
@@ -57,12 +136,19 @@ func activitiesHandler(db *sql.DB) http.HandlerFunc {
 				activities = []Activity{}
 			}
 
+			//构造标准回应结构体
+			response := ActivityListResponse{
+				Data:     activities,
+				Page:     pagination.Page,
+				PageSize: pagination.PageSize,
+			}
+			//返回当前页面数据并处理可能的编码错误。
 			if err := writeJSON(
 				w,
 				http.StatusOK,
-				activities,
+				response,
 			); err != nil {
-				log.Println("encode activities:", err)
+				log.Println("encode response:", err)
 			}
 
 		//POST方法
@@ -267,6 +353,8 @@ func activityDetailHandler(db *sql.DB) http.HandlerFunc {
 					return
 				}
 
+				//默认分支：未知的内部错误
+				log.Println("update activity error:", err)
 				writeJSONError(
 					w,
 					http.StatusInternalServerError,

@@ -1,5 +1,20 @@
 package main
 
+// Pagination 表示活动列表分页信息。
+// Page 和 PageSize 表示客户端分页参数，Offset 用于数据库查询。
+type Pagination struct {
+	Page     int
+	PageSize int
+	Offset   int
+}
+
+// ActivityListResponse 表示 GET /activities 分页后的响应。
+type ActivityListResponse struct {
+	Data     []Activity `json:"data"`
+	Page     int        `json:"page"`
+	PageSize int        `json:"page_size"`
+}
+
 // CreateActivityRequest 表示 POST /activities 的请求体。
 type CreateActivityRequest struct {
 	Name     string `json:"name"`

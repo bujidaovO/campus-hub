@@ -9,10 +9,17 @@ import (
 
 var ErrNoFields = errors.New("no fields to update")
 
-// loadActivities 函数从数据库中加载活动数据，并返回一个包含所有活动的切片（和error）。
-func loadActivities(db *sql.DB) ([]Activity, error) { //db *sql.DB：把 main() 里的数据库连接池对象传进函数。(依旧指针形式)
+// loadActivities 函数从数据库中加载活动数据，并返回一个包含所需活动的切片（和可能的error）。
+func loadActivities(db *sql.DB, limit int, offset int) ([]Activity, error) { //db *sql.DB：把 main() 里的数据库连接池对象传进函数。(依旧指针形式)
 	rows, err := db.Query(
-		"SELECT id, name, capacity, open FROM activities",
+		`SELECT id, name, capacity, open
+		FROM activities
+		ORDER BY id ASC
+		LIMIT ?
+		OFFSET ?
+		`,
+		limit,
+		offset,
 	)
 	if err != nil {
 		return nil, err //查询数据库失败，返回错误
